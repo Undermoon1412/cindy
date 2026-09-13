@@ -24,9 +24,36 @@ describe('Claude idle release override', () => {
       expect(readClaudeIdleMinutes()).toBe(30); expect(fs.existsSync(file)).toBe(false);
       fs.writeFileSync(file, '{"minutes":0}'); expect(readClaudeIdleMinutes()).toBe(0);
       fs.writeFileSync(file, '{"minutes":60}');
-      const changed = new Date(Date.now() + 5000); fs.utimesSync(file, changed, changed);
       expect(readClaudeIdleMinutes()).toBe(60);
       fs.unlinkSync(file); expect(readClaudeIdleMinutes()).toBe(30);
+    } finally { fs.rmSync(state.dir, { recursive: true, force: true }); }
+  });
+  it.each(['rewrite', 'replace'])('reloads a same-size %s with an unchanged mtime', mode => {
+    state.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-idle-settings-'));
+    const file = path.join(state.dir, 'claude-idle-release.json');
+    const timestamp = new Date('2026-01-01T00:00:00Z');
+    try {
+      fs.writeFileSync(file, '{"minutes":30}'); fs.utimesSync(file, timestamp, timestamp);
+      const before = fs.statSync(file);
+      expect(readClaudeIdleMinutes()).toBe(30);
+      const destination = mode === 'replace' ? `${file}.tmp` : file;
+      fs.writeFileSync(destination, '{"minutes":0 }');
+      fs.utimesSync(destination, timestamp, timestamp);
+      if (mode === 'replace') fs.renameSync(destination, file);
+      expect(fs.statSync(file).mtimeMs).toBe(before.mtimeMs);
+      expect(fs.statSync(file).size).toBe(before.size);
+      expect(readClaudeIdleMinutes()).toBe(0);
+    } finally { fs.rmSync(state.dir, { recursive: true, force: true }); }
+  });
+  it('keeps malformed overrides intact and observes their repair', () => {
+    state.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-idle-settings-'));
+    const file = path.join(state.dir, 'claude-idle-release.json');
+    try {
+      fs.writeFileSync(file, '{invalid');
+      expect(readClaudeIdleMinutes()).toBe(30);
+      expect(fs.readFileSync(file, 'utf-8')).toBe('{invalid');
+      fs.writeFileSync(file, '{"minutes":0}');
+      expect(readClaudeIdleMinutes()).toBe(0);
     } finally { fs.rmSync(state.dir, { recursive: true, force: true }); }
   });
 });

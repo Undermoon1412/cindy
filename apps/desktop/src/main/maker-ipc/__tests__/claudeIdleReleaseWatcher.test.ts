@@ -20,7 +20,7 @@ function fixture() {
   let live: IdleClaudeSession[] = [session];
   const deps = {
     listSessions: () => live, getSession: (id: string) => live.find(s => s.id === id),
-    readMinutes: vi.fn(() => 30), isOrdinaryTask: vi.fn(async () => true),
+    readMinutes: vi.fn(() => 30), isOrdinaryTask: vi.fn(async (_id: string, _nativeId: string) => true),
     hasPendingInput: vi.fn(async () => false), isHostBusy: vi.fn(() => false),
     withLock: async <T>(_id: string, fn: () => Promise<T>) => fn(),
     close: vi.fn(async (s: IdleClaudeSession) => {
@@ -173,6 +173,21 @@ describe('ordinary Claude task eligibility in SQLite', () => {
       db.exec(change);
       expect(eligible.get('task', 'native-history')).toBeUndefined();
     } finally { db.close(); }
+  });
+  it.each([
+    "INSERT INTO session_goals VALUES ('task', 'active')",
+    "INSERT INTO orca_teams VALUES ('task', 'active')",
+  ])('rechecks ownership changed during queue restoration: %s', async change => {
+    const db = database();
+    const f = fixture();
+    try {
+      const eligible = db.prepare(ORDINARY_CLAUDE_TASK_SQL);
+      f.deps.isOrdinaryTask.mockImplementation(async (id, nativeId) => Boolean(eligible.get(id, nativeId)));
+      f.deps.hasPendingInput.mockImplementation(async () => { db.exec(change); return false; });
+      await aged(f); await f.watcher.scanNow();
+      expect(f.deps.hasPendingInput).toHaveBeenCalledOnce();
+      expect(f.deps.close).not.toHaveBeenCalled();
+    } finally { f.watcher.stop(); db.close(); }
   });
   it('retains completed goals and other tasks while releasing only a resumable ordinary task', () => {
     const db = database();

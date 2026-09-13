@@ -1,8 +1,8 @@
 /** Hidden, hot-reloaded override for ordinary local Claude runtime reclamation. */
 import { app } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { desktopMakerLogger } from './logger-adapter.js';
-import { createOverrideSettingsFile } from './override-settings-file.js';
 
 export const DEFAULT_CLAUDE_IDLE_MINUTES = 30;
 export function normalizeClaudeIdleSettings(raw: unknown): { minutes: number } {
@@ -10,14 +10,17 @@ export function normalizeClaudeIdleSettings(raw: unknown): { minutes: number } {
   return { minutes: typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 1440
     ? value : DEFAULT_CLAUDE_IDLE_MINUTES };
 }
-const store = createOverrideSettingsFile({
-  filePath: () => path.join(app.getPath('userData'), 'claude-idle-release.json'),
-  defaults: { minutes: DEFAULT_CLAUDE_IDLE_MINUTES },
-  normalize: normalizeClaudeIdleSettings,
-  log: desktopMakerLogger.child('claude-idle-release-settings'),
-  label: 'claude-idle-release',
-});
+const log = desktopMakerLogger.child('claude-idle-release-settings');
 export function readClaudeIdleMinutes(): number {
-  store.invalidateIfChanged();
-  return store.read().minutes;
+  // This small override is read at scan/close boundaries. Do not cache by mtime:
+  // editors can rewrite or replace it while preserving its timestamp and size.
+  const file = path.join(app.getPath('userData'), 'claude-idle-release.json');
+  try {
+    return normalizeClaudeIdleSettings(JSON.parse(fs.readFileSync(file, 'utf-8'))).minutes;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      log.warn('Claude idle release settings unavailable; falling back to defaults');
+    }
+    return DEFAULT_CLAUDE_IDLE_MINUTES;
+  }
 }

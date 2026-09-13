@@ -78,6 +78,12 @@ export function createClaudeIdleReleaseWatcher(deps: ClaudeIdleReleaseDeps) {
               state.since = deps.now();
               return;
             }
+            // Queue restoration can yield to a Goal/Orca ownership transition.
+            // Scope is the last asynchronous check; recheck live state below before closing.
+            if (!await deps.isOrdinaryTask(session.id, sdkSessionId)) {
+              state.since = deps.now();
+              return;
+            }
             // SQL/queue restoration can yield to a new turn, setting change, shutdown or replacement.
             const currentMinutes = deps.readMinutes();
             if (scanEpoch !== epoch || deps.getSession(session.id) !== session || busy(session, state.closeFailed)
